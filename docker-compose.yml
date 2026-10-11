@@ -5,21 +5,21 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "9001:9000"   # charger connects here: ws://<host-ip>:9000/<station-id>
+      - "${OCPP_PORT:-9000}:9000"   # charger connects here: ws://<host-ip>:9000/<station-id>
 
   # Optional MQTT broker. Skip it if Home Assistant already has one (e.g. the
   # Mosquitto add-on) and just point MQTT_HOST at that broker in .env.
   #   docker compose --profile broker up -d
-  #mosquitto:
-  #  image: eclipse-mosquitto:2
-  #  container_name: ocpp-mosquitto
-  #  profiles: ["broker"]
-  #  restart: unless-stopped
-  #  ports:
-  #    - "1883:1883"
-  #  volumes:
-  #    - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-  #    - mosquitto-data:/mosquitto/data
-  #
-  #volumes:
-  #  mosquitto-data:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: ocpp-mosquitto
+    profiles: ["broker"]
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  mosquitto-data:

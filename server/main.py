@@ -50,10 +50,14 @@ MAX_A = int(env("MAX_CURRENT", "32"))
 PROFILE_PURPOSE = env("PROFILE_PURPOSE", "TxDefaultProfile")
 PROFILE_CONNECTOR = int(env("PROFILE_CONNECTOR", "1"))
 PING = float(env("WS_PING_INTERVAL", "60"))
+# Settings pushed to the charger after connect, e.g. "FreeCharging=0,AutoCharge=0". Empty = none.
+FORCE_CONFIG = [tuple(x.split("=", 1)) for x in env("FORCE_CONFIG", "FreeCharging=0").split(",") if "=" in x]
 
 log = logging.getLogger("ocpp-hub")
 
-PLUGGED = {"Preparing", "Charging", "SuspendedEV", "SuspendedEVSE", "Finishing"}
+# SuspendedEVSE is excluded on purpose: this charger reports it while idle with nothing plugged in.
+# It only counts as plugged in while a transaction is active (see Station.update).
+PLUGGED = {"Preparing", "Charging", "SuspendedEV", "Finishing"}
 FULL_MEASURANDS = "Energy.Active.Import.Register,Power.Active.Import,Current.Import,Voltage"
 MIN_MEASURANDS = "Energy.Active.Import.Register,Power.Active.Import"
 
@@ -170,7 +174,7 @@ class Station:
         if "status" in kw:
             st = kw["status"]
             self.state["charging"] = st == "Charging"
-            self.state["plugged_in"] = st in PLUGGED
+            self.state["plugged_in"] = st in PLUGGED or (st == "SuspendedEVSE" and self.tx_id is not None)
             if st != "Charging":
                 self.state["power"] = 0
                 self.state["current"] = 0
@@ -247,6 +251,9 @@ class Station:
                 await cp.send(call.Reset(type="Soft"))
             elif name == "refresh":
                 await cp.trigger()
+            elif name == "set_config":  # payload "Key=Value", published to <base>/<id>/cmd/set_config
+                key, _, value = payload.partition("=")
+                await cp._set_config(key.strip(), value.strip())
         except Exception as exc:  # noqa: BLE001
             log.warning("[%s] command %s failed: %s", self.ident, name, exc)
 
@@ -358,6 +365,14 @@ class Charger(BaseChargePoint):
                 await self._set_config("MeterValueSampleInterval", str(METER_INTERVAL))
                 if not await self._set_config("MeterValuesSampledData", FULL_MEASURANDS):
                     await self._set_config("MeterValuesSampledData", MIN_MEASURANDS)
+            for key, value in FORCE_CONFIG:
+                ok = await self._set_config(key.strip(), value.strip())
+                log.info("[%s] forced config %s=%s -> %s", self.station.ident, key.strip(), value.strip(),
+                         "ok" if ok else "NOT accepted")
+            if FORCE_CONFIG:
+                chk = await self.send(call.GetConfiguration(key=[k.strip() for k, _ in FORCE_CONFIG]))
+                log.info("[%s] charger now reports: %s", self.station.ident,
+                         {x["key"]: x.get("value") for x in (chk.configuration_key or [])})
             await self.trigger()
         except Exception as exc:  # noqa: BLE001
             log.warning("[%s] post-boot setup incomplete: %s", self.station.ident, exc)

@@ -27,5 +27,11 @@ The charger's full OCPP configuration is published retained to `ocpp/<id>/config
   `AUTO_START_ON_PLUG=true`. Current limit rejected: try `PROFILE_PURPOSE=ChargePointMaxProfile`, `PROFILE_CONNECTOR=0`.
 - Keep this on your LAN/VPN. Set `OCPP_PASSWORD` if the charger supports Basic auth.
 
+## Starcharge Artemis_CS notes (from real logs)
+- `FreeCharging=1` makes the charger reject every RemoteStartTransaction ("FreeCharging mode is enabled,
+  remote start is not allowed"). `FORCE_CONFIG=FreeCharging=0` (default) switches it off on connect.
+- Any config key can be changed from HA/MQTT: publish `FreeCharging=0` to `ocpp/<id>/cmd/set_config`.
+- `OfflinePlugChargeEnabled=true` makes the charger fall back to free charging if the server is unreachable.
+
 ## Status
 Written against the OCPP 1.6J spec; **not yet tested against a real MG Charge Hub Pro** (or run in CI).
