@@ -285,6 +285,8 @@ class Charger(BaseChargePoint):
     def __init__(self, station: Station, ws):
         super().__init__(station.ident, LoggingWS(ws, station))
         self.station, self.raw_ws = station, ws
+        self._setup_done = False
+        self._booted = False
 
     # ---- helpers for outgoing calls
     async def send(self, payload):
@@ -293,7 +295,11 @@ class Charger(BaseChargePoint):
         return res
 
     async def remote_start(self):
-        await self.send(call.RemoteStartTransaction(id_tag=DEFAULT_ID_TAG, connector_id=1))
+        res = await self.send(call.RemoteStartTransaction(id_tag=DEFAULT_ID_TAG, connector_id=1))
+        if res.status != "Accepted":
+            log.warning("[%s] RemoteStart rejected (status=%s, plugged_in=%s). Retrying without connectorId",
+                        self.station.ident, self.station.state.get("status"), self.station.state.get("plugged_in"))
+            await self.send(call.RemoteStartTransaction(id_tag=DEFAULT_ID_TAG))
 
     async def remote_stop(self):
         if self.station.tx_id is None:
@@ -321,8 +327,26 @@ class Charger(BaseChargePoint):
         res = await self.send(call.ChangeConfiguration(key=key, value=value))
         return res.status in ("Accepted", "RebootRequired")
 
+    async def post_connect(self):
+        """This charger may never send BootNotification; set up anyway if it hasn't within 8s."""
+        await asyncio.sleep(8)
+        if self._booted or self._setup_done:
+            return
+        log.info("[%s] no BootNotification seen; requesting one via TriggerMessage", self.station.ident)
+        try:
+            await self.send(call.TriggerMessage(requested_message="BootNotification"))
+        except Exception as exc:  # noqa: BLE001
+            log.info("[%s] TriggerMessage BootNotification failed: %s", self.station.ident, exc)
+        await asyncio.sleep(6)
+        if not self._setup_done:
+            log.info("[%s] still no BootNotification; running setup anyway", self.station.ident)
+            await self.post_boot()
+
     async def post_boot(self):
-        """Runs after BootNotification is answered: dump config, tune metering, request status."""
+        """Dump config, tune metering, request status (once per connection)."""
+        if self._setup_done:
+            return
+        self._setup_done = True
         await asyncio.sleep(2)
         try:
             res = await self.send(call.GetConfiguration())
@@ -347,6 +371,7 @@ class Charger(BaseChargePoint):
     @on("BootNotification")
     async def on_boot(self, charge_point_model, charge_point_vendor, **kw):
         s = self.station
+        self._booted = True
         s.info.update(vendor=charge_point_vendor, model=charge_point_model,
                       firmware=kw.get("firmware_version"), serial=kw.get("charge_point_serial_number"))
         log.info("[%s] boot: %s %s fw=%s", s.ident, charge_point_vendor, charge_point_model, s.info["firmware"])
@@ -481,6 +506,7 @@ async def on_connect(ws):
     station = get_station(ident)
     cp = Charger(station, ws)
     station.attach(cp)
+    asyncio.create_task(cp.post_connect())
     try:
         await cp.start()
     except ConnectionClosed:
@@ -497,6 +523,8 @@ async def main():
                         format="%(asctime)s %(levelname)s %(message)s")
     for noisy in ("websockets", "ocpp", "asyncio"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Port scanners / browsers / health checks hitting :9000 are not chargers; don't spam tracebacks.
+    logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     bus_task = asyncio.create_task(bus.run())
     async with serve(on_connect, OCPP_HOST, OCPP_PORT, subprotocols=["ocpp1.6"],
                      ping_interval=PING or None, ping_timeout=PING or None):
