@@ -1,0 +1,19 @@
+# Paste into a dashboard (Raw configuration editor). Replace "sim001" with your
+# device's entity prefix (Settings > Devices > EV Charger <id>).
+type: vertical-stack
+cards:
+  - type: entities
+    title: EV Charger
+    entities:
+      - entity: sensor.ev_charger_sim001_status
+      - entity: binary_sensor.ev_charger_sim001_plugged_in
+      - entity: switch.ev_charger_sim001_charge
+      - entity: number.ev_charger_sim001_current_limit
+      - entity: sensor.ev_charger_sim001_power
+      - entity: sensor.ev_charger_sim001_session_energy
+      - entity: sensor.ev_charger_sim001_total_energy
+      - entity: button.ev_charger_sim001_unlock_connector
+  - type: history-graph
+    hours_to_show: 12
+    entities:
+      - sensor.ev_charger_sim001_power
