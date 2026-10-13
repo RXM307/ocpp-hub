@@ -50,6 +50,8 @@ MAX_A = int(env("MAX_CURRENT", "32"))
 PROFILE_PURPOSE = env("PROFILE_PURPOSE", "TxDefaultProfile")
 PROFILE_CONNECTOR = int(env("PROFILE_CONNECTOR", "1"))
 PING = float(env("WS_PING_INTERVAL", "60"))
+# Remove charging profiles left on the charger by other systems (e.g. a stale 0 A limit that keeps it idle).
+CLEAR_PROFILES = env_bool("CLEAR_PROFILES_ON_CONNECT", True)
 # Settings pushed to the charger after connect, e.g. "FreeCharging=0,AutoCharge=0". Empty = none.
 FORCE_CONFIG = [tuple(x.split("=", 1)) for x in env("FORCE_CONFIG", "FreeCharging=0").split(",") if "=" in x]
 
@@ -148,6 +150,7 @@ ENTITIES = [
                                                   "unit_of_measurement": "A", "device_class": "current"}),
     ("button", "unlock", "Unlock connector", {"icon": "mdi:lock-open"}),
     ("button", "refresh", "Refresh status", {"icon": "mdi:refresh", **DIAG}),
+    ("button", "clear_profiles", "Clear charging limits", {"icon": "mdi:speedometer", **DIAG}),
     ("button", "reset", "Reboot charger", {"device_class": "restart", **DIAG}),
 ]
 STATE_KEYS = ["status", "station_status", "error_code", "power", "energy_total_kwh", "session_energy_kwh",
@@ -251,6 +254,8 @@ class Station:
                 await cp.send(call.Reset(type="Soft"))
             elif name == "refresh":
                 await cp.trigger()
+            elif name == "clear_profiles":
+                await cp.clear_profiles()
             elif name == "set_config":  # payload "Key=Value", published to <base>/<id>/cmd/set_config
                 key, _, value = payload.partition("=")
                 await cp._set_config(key.strip(), value.strip())
@@ -323,6 +328,11 @@ class Charger(BaseChargePoint):
         if res.status == "Accepted":
             self.station.update(current_limit=amps)
 
+    async def clear_profiles(self):
+        res = await self.send(call.ClearChargingProfile())
+        if res.status != "Accepted":  # some firmwares only match explicit criteria
+            await self.send(call.ClearChargingProfile(charging_profile_purpose="TxDefaultProfile"))
+
     async def trigger(self):
         for msg in ("StatusNotification", "MeterValues"):
             try:
@@ -365,6 +375,8 @@ class Charger(BaseChargePoint):
                 await self._set_config("MeterValueSampleInterval", str(METER_INTERVAL))
                 if not await self._set_config("MeterValuesSampledData", FULL_MEASURANDS):
                     await self._set_config("MeterValuesSampledData", MIN_MEASURANDS)
+            if CLEAR_PROFILES:
+                await self.clear_profiles()
             for key, value in FORCE_CONFIG:
                 ok = await self._set_config(key.strip(), value.strip())
                 log.info("[%s] forced config %s=%s -> %s", self.station.ident, key.strip(), value.strip(),

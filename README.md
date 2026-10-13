@@ -33,5 +33,9 @@ The charger's full OCPP configuration is published retained to `ocpp/<id>/config
 - Any config key can be changed from HA/MQTT: publish `FreeCharging=0` to `ocpp/<id>/cmd/set_config`.
 - `OfflinePlugChargeEnabled=true` makes the charger fall back to free charging if the server is unreachable.
 
+- A leftover charging profile with a 0 A limit (seen as `limit:0.0A` / `OCPPCurrent[0]` in the charger log) lets a
+  remote start succeed but the charger never offers power (status SuspendedEV/SuspendedEVSE, PWM 0.0).
+  `CLEAR_PROFILES_ON_CONNECT=true` (default) or the "Clear charging limits" button removes it.
+
 ## Status
 Written against the OCPP 1.6J spec; **not yet tested against a real MG Charge Hub Pro** (or run in CI).
